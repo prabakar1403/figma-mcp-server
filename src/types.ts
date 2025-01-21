@@ -1,42 +1,60 @@
 import { z } from 'zod';
 import { ResourceContents } from '@modelcontextprotocol/sdk/types';
 
-export type FigmaFile = {
-  key: string;
-  name: string;
-  lastModified: string;
-  thumbnailUrl: string;
-  version: string;
+// Previous types remain...
+
+// New Image specific types
+export type ImageScaleMode = 'FILL' | 'FIT' | 'CROP' | 'TILE';
+
+export type ImageProperties = {
+  source: string;        // URL or base64 data
+  scaleMode: ImageScaleMode;
+  rotation?: number;     // Rotation in degrees
+  opacity?: number;      // 0-1
+  cropSettings?: {
+    top?: number;
+    left?: number;
+    bottom?: number;
+    right?: number;
+  };
 };
 
-export type FigmaComponent = {
-  key: string;
-  name: string;
-  description: string;
-  fileKey: string;
-  nodeId: string;
+// Update CreationProperties
+export type CreationProperties = {
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  fill?: FillStyle;
+  stroke?: FillStyle;
+  strokeWeight?: number;
+  text?: string;
+  line?: LineProperties;
+  polygon?: PolygonProperties;
+  image?: ImageProperties;  // Add image properties
 };
 
-export type FigmaVariable = {
-  id: string;
-  name: string;
-  description: string;
-  fileKey: string;
-  resolvedType: string;
-  valuesByMode: Record<string, any>;
-};
+// Update ShapeType
+export type ShapeType = 
+  | 'rectangle' 
+  | 'ellipse' 
+  | 'text'
+  | 'line'
+  | 'polygon'
+  | 'image';  // Add image type
 
-export type FigmaResource = {
-  uri: string;
-  type: 'file' | 'component' | 'variable';
-  name: string;
-  description?: string;
-  metadata?: Record<string, any>;
+// Rest of the types remain the same...
+
+export type CreationParams = {
+  type: ShapeType;
+  properties: CreationProperties;
 };
 
 export type ResourceHandler = {
   list: () => Promise<FigmaResource[]>;
   read: (uri: string) => Promise<ResourceContents[]>;
+  create?: (params: CreationParams) => Promise<ResourceContents[]>;
+  modify?: (uri: string, properties: CreationProperties) => Promise<void>;
   watch?: (uri: string) => Promise<void>;
   search?: (query: string) => Promise<FigmaResource[]>;
 };
