@@ -1,5 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { Resource } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import express from "express";
 import { createServer } from "http";
 import { z } from 'zod';
@@ -20,6 +22,11 @@ const FigmaFileSchema = z.object({
 });
 
 type FigmaFile = z.infer<typeof FigmaFileSchema>;
+type MCPResource = Resource & {
+  id: string;
+  type: string;
+  attributes: Record<string, unknown>;
+};
 
 class FigmaAPIServer {
     private server: Server;
@@ -106,17 +113,17 @@ class FigmaAPIServer {
             });
 
             // Create SSE transport for this connection
-            const sseTransport = new SSEServerTransport('/events', res);
+            const sseTransport = new SSEServerTransport('/events', res) as Transport;
             
             try {
                 // Register transport with server
-                await this.server.addTransport(sseTransport);
+                this.server.transport = sseTransport;
                 console.log('Transport added successfully');
 
                 // Handle client disconnect
                 req.on('close', () => {
                     console.log('Client disconnected');
-                    this.server.removeTransport(sseTransport).catch(console.error);
+                    this.server.transport = undefined;
                 });
             } catch (error) {
                 console.error('Error setting up SSE transport:', error);
@@ -132,12 +139,12 @@ class FigmaAPIServer {
 
     private setupHandlers() {
         // List resources handler
-        this.server.onList(async () => {
+        this.server.handle("list", async () => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
                 
-                const files = response.files.map((file: any) => ({
+                const files: MCPResource[] = response.files.map((file: any) => ({
                     id: file.key,
                     type: 'figma.file',
                     attributes: {
@@ -157,13 +164,13 @@ class FigmaAPIServer {
         });
 
         // Read resource handler
-        this.server.onRead(async ({ id }) => {
+        this.server.handle("read", async (params: { id: string }) => {
             try {
-                console.log(`Reading file: ${id}`);
-                const response = await this.makeAPIRequest(`/files/${id}`);
+                console.log(`Reading file: ${params.id}`);
+                const response = await this.makeAPIRequest(`/files/${params.id}`);
                 
-                return {
-                    id,
+                const resource: MCPResource = {
+                    id: params.id,
                     type: 'figma.file',
                     attributes: {
                         name: response.name,
@@ -172,17 +179,19 @@ class FigmaAPIServer {
                         document: response.document
                     }
                 };
+                
+                return { resource };
             } catch (error) {
-                console.error(`Error reading file ${id}:`, error);
+                console.error(`Error reading file ${params.id}:`, error);
                 throw error;
             }
         });
 
-        // Watch resource handler
-        this.server.onWatch(async ({ resources }) => {
-            console.log('Watch request received for resources:', resources);
+        // Watch handler
+        this.server.handle("watch", async (params: { resources: MCPResource[] }) => {
+            console.log('Watch request received for resources:', params.resources);
             
-            for (const resource of resources) {
+            for (const resource of params.resources) {
                 if (!this.watchedResources.has(resource.id)) {
                     try {
                         const response = await this.makeAPIRequest(`/files/${resource.id}`);
@@ -201,13 +210,15 @@ class FigmaAPIServer {
                     try {
                         const response = await this.makeAPIRequest(`/files/${id}`);
                         if (response.lastModified !== data.lastModified) {
-                            this.server.emit('resourceChanged', {
-                                id,
-                                type: 'figma.file',
-                                attributes: {
-                                    name: response.name,
-                                    lastModified: response.lastModified,
-                                    version: response.version
+                            this.server.notify("resourceChanged", {
+                                resource: {
+                                    id,
+                                    type: 'figma.file',
+                                    attributes: {
+                                        name: response.name,
+                                        lastModified: response.lastModified,
+                                        version: response.version
+                                    }
                                 }
                             });
                             this.watchedResources.set(id, {
@@ -219,18 +230,20 @@ class FigmaAPIServer {
                     }
                 }
             }, 30000); // Check every 30 seconds
+            
+            return { ok: true };
         });
 
         // Subscribe handler
-        this.server.onSubscribe(async ({ resources }) => {
-            console.log('Subscribe request received for resources:', resources);
+        this.server.handle("subscribe", async (params: { resources: MCPResource[] }) => {
+            console.log('Subscribe request received for resources:', params.resources);
             return { ok: true };
         });
 
         // Unsubscribe handler
-        this.server.onUnsubscribe(async ({ resources }) => {
-            console.log('Unsubscribe request received for resources:', resources);
-            resources.forEach(resource => {
+        this.server.handle("unsubscribe", async (params: { resources: MCPResource[] }) => {
+            console.log('Unsubscribe request received for resources:', params.resources);
+            params.resources.forEach(resource => {
                 this.watchedResources.delete(resource.id);
             });
             return { ok: true };
