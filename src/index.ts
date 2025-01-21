@@ -20,6 +20,35 @@ const FigmaFileSchema = z.object({
   version: z.string()
 });
 
+// Define response schemas
+const ListResponseSchema = z.object({
+  resources: z.array(z.object({
+    id: z.string(),
+    type: z.string(),
+    attributes: z.record(z.unknown())
+  }))
+});
+
+const ReadResponseSchema = z.object({
+  resource: z.object({
+    id: z.string(),
+    type: z.string(),
+    attributes: z.record(z.unknown())
+  })
+});
+
+const WatchResponseSchema = z.object({
+  ok: z.boolean()
+});
+
+const SubscribeResponseSchema = z.object({
+  ok: z.boolean()
+});
+
+const UnsubscribeResponseSchema = z.object({
+  ok: z.boolean()
+});
+
 type FigmaFile = z.infer<typeof FigmaFileSchema>;
 interface MCPResource {
   id: string;
@@ -139,7 +168,7 @@ class FigmaAPIServer {
 
     private setupHandlers() {
         // List resources handler
-        this.server.onRequest("list", async () => {
+        this.server.setRequestHandler("list", async () => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
@@ -156,7 +185,7 @@ class FigmaAPIServer {
                 }));
 
                 console.log(`Found ${files.length} files`);
-                return { resources: files };
+                return ListResponseSchema.parse({ resources: files });
             } catch (error) {
                 console.error('Error listing files:', error);
                 throw error;
@@ -164,34 +193,34 @@ class FigmaAPIServer {
         });
 
         // Read resource handler
-        this.server.onRequest("read", async (params: { id: string }) => {
+        this.server.setRequestHandler("read", async ({ id }: { id: string }) => {
             try {
-                console.log(`Reading file: ${params.id}`);
-                const response = await this.makeAPIRequest(`/files/${params.id}`);
+                console.log(`Reading file: ${id}`);
+                const response = await this.makeAPIRequest(`/files/${id}`);
                 
-                const resource: MCPResource = {
-                    id: params.id,
-                    type: 'figma.file',
-                    attributes: {
-                        name: response.name,
-                        lastModified: response.lastModified,
-                        version: response.version,
-                        document: response.document
+                return ReadResponseSchema.parse({
+                    resource: {
+                        id,
+                        type: 'figma.file',
+                        attributes: {
+                            name: response.name,
+                            lastModified: response.lastModified,
+                            version: response.version,
+                            document: response.document
+                        }
                     }
-                };
-                
-                return { resource };
+                });
             } catch (error) {
-                console.error(`Error reading file ${params.id}:`, error);
+                console.error(`Error reading file ${id}:`, error);
                 throw error;
             }
         });
 
         // Watch handler
-        this.server.onRequest("watch", async (params: { resources: MCPResource[] }) => {
-            console.log('Watch request received for resources:', params.resources);
+        this.server.setRequestHandler("watch", async ({ resources }: { resources: MCPResource[] }) => {
+            console.log('Watch request received for resources:', resources);
             
-            for (const resource of params.resources) {
+            for (const resource of resources) {
                 if (!this.watchedResources.has(resource.id)) {
                     try {
                         const response = await this.makeAPIRequest(`/files/${resource.id}`);
@@ -234,22 +263,22 @@ class FigmaAPIServer {
                 }
             }, 30000); // Check every 30 seconds
             
-            return { ok: true };
+            return WatchResponseSchema.parse({ ok: true });
         });
 
         // Subscribe handler
-        this.server.onRequest("subscribe", async (params: { resources: MCPResource[] }) => {
-            console.log('Subscribe request received for resources:', params.resources);
-            return { ok: true };
+        this.server.setRequestHandler("subscribe", async ({ resources }: { resources: MCPResource[] }) => {
+            console.log('Subscribe request received for resources:', resources);
+            return SubscribeResponseSchema.parse({ ok: true });
         });
 
         // Unsubscribe handler
-        this.server.onRequest("unsubscribe", async (params: { resources: MCPResource[] }) => {
-            console.log('Unsubscribe request received for resources:', params.resources);
-            params.resources.forEach(resource => {
+        this.server.setRequestHandler("unsubscribe", async ({ resources }: { resources: MCPResource[] }) => {
+            console.log('Unsubscribe request received for resources:', resources);
+            resources.forEach(resource => {
                 this.watchedResources.delete(resource.id);
             });
-            return { ok: true };
+            return UnsubscribeResponseSchema.parse({ ok: true });
         });
     }
 
