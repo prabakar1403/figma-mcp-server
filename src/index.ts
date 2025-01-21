@@ -1,4 +1,19 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import {
+  LATEST_PROTOCOL_VERSION,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  Server,
+  InitializeRequestSchema,
+  InitializeResult,
+  InitializeRequest,
+  InitializedNotificationSchema,
+  ResourceSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  SubscribeRequestSchema,
+  UnsubscribeRequestSchema,
+  ResourceUpdatedNotificationSchema,
+  ServerCapabilities
+} from "@modelcontextprotocol/sdk";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import express from "express";
@@ -10,96 +25,6 @@ import cors from 'cors';
 
 // Load environment variables
 dotenv.config();
-
-// Define request schemas
-const ListRequestSchema = z.object({
-  method: z.literal('list')
-});
-
-const ReadRequestSchema = z.object({
-  method: z.literal('read'),
-  params: z.object({
-    id: z.string()
-  })
-});
-
-const WatchRequestSchema = z.object({
-  method: z.literal('watch'),
-  params: z.object({
-    resources: z.array(z.object({
-      id: z.string(),
-      type: z.string(),
-      attributes: z.record(z.unknown())
-    }))
-  })
-});
-
-const SubscribeRequestSchema = z.object({
-  method: z.literal('subscribe'),
-  params: z.object({
-    resources: z.array(z.object({
-      id: z.string(),
-      type: z.string(),
-      attributes: z.record(z.unknown())
-    }))
-  })
-});
-
-const UnsubscribeRequestSchema = z.object({
-  method: z.literal('unsubscribe'),
-  params: z.object({
-    resources: z.array(z.object({
-      id: z.string(),
-      type: z.string(),
-      attributes: z.record(z.unknown())
-    }))
-  })
-});
-
-// Define response schemas
-const ListResponseSchema = z.object({
-  resources: z.array(z.object({
-    id: z.string(),
-    type: z.string(),
-    attributes: z.record(z.unknown())
-  }))
-});
-
-const ReadResponseSchema = z.object({
-  resource: z.object({
-    id: z.string(),
-    type: z.string(),
-    attributes: z.record(z.unknown())
-  })
-});
-
-const WatchResponseSchema = z.object({
-  ok: z.boolean()
-});
-
-const SubscribeResponseSchema = z.object({
-  ok: z.boolean()
-});
-
-const UnsubscribeResponseSchema = z.object({
-  ok: z.boolean()
-});
-
-// Define resource schemas
-const FigmaFileSchema = z.object({
-  key: z.string(),
-  name: z.string(),
-  lastModified: z.string(),
-  thumbnailUrl: z.string().optional(),
-  version: z.string()
-});
-
-type FigmaFile = z.infer<typeof FigmaFileSchema>;
-interface MCPResource {
-  id: string;
-  type: string;
-  attributes: Record<string, unknown>;
-}
 
 class FigmaAPIServer {
     private server: Server;
@@ -118,25 +43,31 @@ class FigmaAPIServer {
         console.log(`Initializing server with token starting with: ${figmaToken.substring(0, 8)}...`);
         
         this.figmaToken = figmaToken;
+
+        const capabilities: ServerCapabilities = {
+            resources: {
+                subscribe: true,
+                listChanged: true,
+                list: true,
+                read: true,
+                watch: true
+            },
+            logging: {
+                // Basic logging support
+            }
+        };
+
         this.server = new Server({
             name: "figma-api-server",
             version: "1.0.0",
         }, {
-            capabilities: {
-                resources: {
-                    subscribe: true,
-                    listChanged: true,
-                    list: true,
-                    read: true,
-                    watch: true
-                },
-                commands: {},
-                events: {}
-            }
+            capabilities,
+            instructions: "This server provides access to Figma files and their updates."
         });
 
         this.expressApp = express();
         this.httpServer = createServer(this.expressApp);
+        
         this.setupHandlers();
         this.setupExpress();
     }
@@ -162,13 +93,11 @@ class FigmaAPIServer {
     }
 
     private setupExpress() {
-        // Log all incoming requests
         this.expressApp.use((req, res, next) => {
             console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
             next();
         });
 
-        // CORS configuration
         this.expressApp.use(cors({
             origin: '*',
             methods: ['GET', 'POST'],
@@ -176,7 +105,6 @@ class FigmaAPIServer {
             credentials: true
         }));
 
-        // SSE endpoint
         this.expressApp.get('/events', async (req, res) => {
             console.log('New SSE connection attempt');
             
@@ -186,18 +114,15 @@ class FigmaAPIServer {
                 'Connection': 'keep-alive'
             });
 
-            // Create SSE transport for this connection
-            const sseTransport = new SSEServerTransport('/events', res) as Transport;
+            const sseTransport = new SSEServerTransport('/events', res);
             
             try {
-                // Store transport reference
-                this.currentTransport = sseTransport;
+                await this.server.addTransport(sseTransport);
                 console.log('Transport added successfully');
 
-                // Handle client disconnect
-                req.on('close', () => {
+                req.on('close', async () => {
                     console.log('Client disconnected');
-                    this.currentTransport = undefined;
+                    await this.server.removeTransport(sseTransport);
                 });
             } catch (error) {
                 console.error('Error setting up SSE transport:', error);
@@ -205,28 +130,58 @@ class FigmaAPIServer {
             }
         });
 
-        // Health check endpoint
         this.expressApp.get('/health', (req, res) => {
             res.json({ status: 'healthy' });
         });
     }
 
     private setupHandlers() {
+        // Initialize handler
+        this.server.setRequestHandler(
+            InitializeRequestSchema,
+            async (request: InitializeRequest): Promise<InitializeResult> => {
+                const requestedVersion = request.params.protocolVersion;
+                console.log(`Client requested protocol version: ${requestedVersion}`);
+
+                return {
+                    protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.includes(requestedVersion)
+                        ? requestedVersion
+                        : LATEST_PROTOCOL_VERSION,
+                    capabilities: this.server.getCapabilities(),
+                    serverInfo: {
+                        name: "figma-api-server",
+                        version: "1.0.0"
+                    }
+                };
+            }
+        );
+
+        // Handle initialized notification
+        this.server.setNotificationHandler(
+            InitializedNotificationSchema,
+            async () => {
+                console.log('Client fully initialized');
+            }
+        );
+
         // List resources handler
-        this.server.setRequestHandler(ListRequestSchema, async () => {
+        this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
-                const files: MCPResource[] = response.files.map((file: any) => ({
-                    id: file.key,
-                    type: 'figma.file',
+                
+                const files = response.files.map((file: any) => ({
+                    uri: `figma://${file.key}`,
+                    name: file.name,
+                    description: `Figma file last modified at ${file.last_modified}`,
+                    mimeType: 'application/vnd.figma',
                     attributes: {
-                        name: file.name,
-                        lastModified: file.last_modified,
                         thumbnailUrl: file.thumbnail_url,
-                        version: file.version
+                        version: file.version,
+                        lastModified: file.last_modified
                     }
                 }));
+
                 console.log(`Found ${files.length} files`);
                 return { resources: files };
             } catch (error) {
@@ -236,91 +191,73 @@ class FigmaAPIServer {
         });
 
         // Read resource handler
-        this.server.setRequestHandler(ReadRequestSchema, async (request) => {
+        this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             try {
-                console.log(`Reading file: ${request.params.id}`);
-                const response = await this.makeAPIRequest(`/files/${request.params.id}`);
+                const fileKey = request.params.uri.replace('figma://', '');
+                console.log(`Reading file: ${fileKey}`);
+                const response = await this.makeAPIRequest(`/files/${fileKey}`);
                 
                 return {
-                    resource: {
-                        id: request.params.id,
-                        type: 'figma.file',
-                        attributes: {
-                            name: response.name,
-                            lastModified: response.lastModified,
-                            version: response.version,
-                            document: response.document
-                        }
-                    }
+                    contents: [{
+                        uri: request.params.uri,
+                        mimeType: 'application/vnd.figma',
+                        text: JSON.stringify(response.document)
+                    }]
                 };
             } catch (error) {
-                console.error(`Error reading file ${request.params.id}:`, error);
+                console.error(`Error reading file: ${error}`);
                 throw error;
             }
         });
 
-        // Watch handler
-        this.server.setRequestHandler(WatchRequestSchema, async (request) => {
-            console.log('Watch request received for resources:', request.params.resources);
-            
-            for (const resource of request.params.resources) {
-                if (!this.watchedResources.has(resource.id)) {
-                    try {
-                        const response = await this.makeAPIRequest(`/files/${resource.id}`);
-                        this.watchedResources.set(resource.id, {
-                            lastModified: response.lastModified
-                        });
-                    } catch (error) {
-                        console.error(`Error watching resource ${resource.id}:`, error);
-                    }
-                }
-            }
-
-            // Set up periodic checking for changes
-            setInterval(async () => {
-                for (const [id, data] of this.watchedResources.entries()) {
-                    try {
-                        const response = await this.makeAPIRequest(`/files/${id}`);
-                        if (response.lastModified !== data.lastModified) {
-                            await this.server.notification({
-                                method: "resourceChanged",
-                                params: {
-                                    resource: {
-                                        id,
-                                        type: 'figma.file',
-                                        attributes: {
-                                            name: response.name,
-                                            lastModified: response.lastModified,
-                                            version: response.version
-                                        }
-                                    }
-                                }
-                            });
-                            this.watchedResources.set(id, {
-                                lastModified: response.lastModified
-                            });
-                        }
-                    } catch (error) {
-                        console.error(`Error checking updates for ${id}:`, error);
-                    }
-                }
-            }, 30000); // Check every 30 seconds
-            
-            return { ok: true };
-        });
-
         // Subscribe handler
         this.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
-            console.log('Subscribe request received for resources:', request.params.resources);
+            const fileKey = request.params.uri.replace('figma://', '');
+            console.log(`Subscribe request received for file: ${fileKey}`);
+            
+            if (!this.watchedResources.has(fileKey)) {
+                try {
+                    const response = await this.makeAPIRequest(`/files/${fileKey}`);
+                    this.watchedResources.set(fileKey, {
+                        lastModified: response.lastModified
+                    });
+                    
+                    // Set up periodic checking for this resource
+                    setInterval(async () => {
+                        try {
+                            const currentData = await this.makeAPIRequest(`/files/${fileKey}`);
+                            const cachedData = this.watchedResources.get(fileKey);
+                            
+                            if (cachedData && currentData.lastModified !== cachedData.lastModified) {
+                                await this.server.notification({
+                                    method: "notifications/resources/updated",
+                                    params: {
+                                        uri: `figma://${fileKey}`
+                                    }
+                                });
+                                
+                                this.watchedResources.set(fileKey, {
+                                    lastModified: currentData.lastModified
+                                });
+                            }
+                        } catch (error) {
+                            console.error(`Error checking updates for ${fileKey}:`, error);
+                        }
+                    }, 30000); // Check every 30 seconds
+                } catch (error) {
+                    console.error(`Error subscribing to ${fileKey}:`, error);
+                    throw error;
+                }
+            }
+            
             return { ok: true };
         });
 
         // Unsubscribe handler
         this.server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
-            console.log('Unsubscribe request received for resources:', request.params.resources);
-            request.params.resources.forEach(resource => {
-                this.watchedResources.delete(resource.id);
-            });
+            const fileKey = request.params.uri.replace('figma://', '');
+            console.log(`Unsubscribe request received for file: ${fileKey}`);
+            this.watchedResources.delete(fileKey);
             return { ok: true };
         });
     }
@@ -340,15 +277,17 @@ class FigmaAPIServer {
             });
 
             console.log('Server started successfully');
-
         } catch (error) {
             console.error('Error starting server:', error);
             throw error;
         }
     }
+
+    public getServer() {
+        return this.server;
+    }
 }
 
-// Start the server
 async function main() {
     try {
         console.log('Starting Figma MCP server...');
