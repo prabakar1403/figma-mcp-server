@@ -13,7 +13,7 @@ async function loadImage(source: string): Promise<Uint8Array> {
     }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(\`Failed to load image: \${errorMessage}\`);
+    throw new Error(`Failed to load image: ${errorMessage}`);
   }
 }
 
@@ -53,7 +53,7 @@ export class CreationHandler implements ResourceHandler {
   async read(uri: string): Promise<ResourceContents[]> {
     const node = this.figma.getNodeById(uri);
     if (!node) {
-      throw new Error(\`Node not found: \${uri}\`);
+      throw new Error(`Node not found: ${uri}`);
     }
     return [{
       type: 'application/json',
@@ -102,7 +102,7 @@ export class CreationHandler implements ResourceHandler {
         node = this.figma.createVector();
         const path = {
           windingRule: 'NONZERO',
-          data: \`M \${start.x} \${start.y} L \${end.x} \${end.y}\`
+          data: `M ${start.x} ${start.y} L ${end.x} ${end.y}`
         };
         node.vectorPaths = [path];
         node.x = Math.min(start.x, end.x);
@@ -134,7 +134,7 @@ export class CreationHandler implements ResourceHandler {
 
         node = this.figma.createVector();
         const pathData = points.reduce((acc, point, i) => 
-          i === 0 ? \`M \${point.x} \${point.y}\` : \`\${acc} L \${point.x} \${point.y}\`,
+          i === 0 ? `M ${point.x} ${point.y}` : `${acc} L ${point.x} ${point.y}`,
           ''
         ) + ' Z';
 
@@ -191,12 +191,12 @@ export class CreationHandler implements ResourceHandler {
           }
         } catch (error: unknown) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          throw new Error(\`Failed to update image: \${errorMessage}\`);
+          throw new Error(`Failed to update image: ${errorMessage}`);
         }
         break;
 
       default:
-        throw new Error(\`Unsupported shape type: \${type}\`);
+        throw new Error(`Unsupported shape type: ${type}`);
     }
 
     // Set common properties
@@ -241,7 +241,7 @@ export class CreationHandler implements ResourceHandler {
   async modify(uri: string, properties: CreationParams['properties']): Promise<void> {
     const node = this.figma.getNodeById(uri);
     if (!node) {
-      throw new Error(\`Node not found: \${uri}\`);
+      throw new Error(`Node not found: ${uri}`);
     }
 
     // Update properties
