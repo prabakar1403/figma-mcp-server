@@ -45,6 +45,31 @@ export type FillStyle = {
   color: Color;
 };
 
+export type Point = {
+  x: number;
+  y: number;
+};
+
+export type LineProperties = {
+  start: Point;
+  end: Point;
+};
+
+export type PolygonProperties = {
+  points: Point[];
+  sides?: number;  // For regular polygons
+};
+
+export type StarProperties = {
+  points: number;
+  innerRadius: number;
+  outerRadius: number;
+};
+
+export type VectorProperties = {
+  path: string;  // SVG-style path data
+};
+
 export type CreationProperties = {
   x?: number;
   y?: number;
@@ -52,10 +77,23 @@ export type CreationProperties = {
   height?: number;
   fill?: FillStyle;
   stroke?: FillStyle;
+  strokeWeight?: number;
+  cornerRadius?: number;
   text?: string;
+  line?: LineProperties;
+  polygon?: PolygonProperties;
+  star?: StarProperties;
+  vector?: VectorProperties;
 };
 
-export type ShapeType = 'rectangle' | 'ellipse' | 'text';
+export type ShapeType = 
+  | 'rectangle' 
+  | 'ellipse' 
+  | 'text'
+  | 'line'
+  | 'polygon'
+  | 'star'
+  | 'vector';
 
 export type CreationParams = {
   type: ShapeType;
