@@ -1,7 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { Resource } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import express from "express";
 import { createServer } from "http";
 import { z } from 'zod';
@@ -22,11 +21,11 @@ const FigmaFileSchema = z.object({
 });
 
 type FigmaFile = z.infer<typeof FigmaFileSchema>;
-type MCPResource = Resource & {
+interface MCPResource {
   id: string;
   type: string;
   attributes: Record<string, unknown>;
-};
+}
 
 class FigmaAPIServer {
     private server: Server;
@@ -35,6 +34,7 @@ class FigmaAPIServer {
     private watchedResources: Map<string, { lastModified: string }> = new Map();
     private expressApp: express.Application;
     private httpServer: ReturnType<typeof createServer>;
+    private currentTransport?: Transport;
 
     constructor(figmaToken: string) {
         if (!figmaToken) {
@@ -116,14 +116,14 @@ class FigmaAPIServer {
             const sseTransport = new SSEServerTransport('/events', res) as Transport;
             
             try {
-                // Register transport with server
-                this.server.transport = sseTransport;
+                // Store transport reference
+                this.currentTransport = sseTransport;
                 console.log('Transport added successfully');
 
                 // Handle client disconnect
                 req.on('close', () => {
                     console.log('Client disconnected');
-                    this.server.transport = undefined;
+                    this.currentTransport = undefined;
                 });
             } catch (error) {
                 console.error('Error setting up SSE transport:', error);
@@ -139,7 +139,7 @@ class FigmaAPIServer {
 
     private setupHandlers() {
         // List resources handler
-        this.server.handle("list", async () => {
+        this.server.methods.list = async () => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
@@ -161,10 +161,10 @@ class FigmaAPIServer {
                 console.error('Error listing files:', error);
                 throw error;
             }
-        });
+        };
 
         // Read resource handler
-        this.server.handle("read", async (params: { id: string }) => {
+        this.server.methods.read = async (params: { id: string }) => {
             try {
                 console.log(`Reading file: ${params.id}`);
                 const response = await this.makeAPIRequest(`/files/${params.id}`);
@@ -185,10 +185,10 @@ class FigmaAPIServer {
                 console.error(`Error reading file ${params.id}:`, error);
                 throw error;
             }
-        });
+        };
 
         // Watch handler
-        this.server.handle("watch", async (params: { resources: MCPResource[] }) => {
+        this.server.methods.watch = async (params: { resources: MCPResource[] }) => {
             console.log('Watch request received for resources:', params.resources);
             
             for (const resource of params.resources) {
@@ -210,7 +210,7 @@ class FigmaAPIServer {
                     try {
                         const response = await this.makeAPIRequest(`/files/${id}`);
                         if (response.lastModified !== data.lastModified) {
-                            this.server.notify("resourceChanged", {
+                            this.server.sendNotification("resourceChanged", {
                                 resource: {
                                     id,
                                     type: 'figma.file',
@@ -232,22 +232,22 @@ class FigmaAPIServer {
             }, 30000); // Check every 30 seconds
             
             return { ok: true };
-        });
+        };
 
         // Subscribe handler
-        this.server.handle("subscribe", async (params: { resources: MCPResource[] }) => {
+        this.server.methods.subscribe = async (params: { resources: MCPResource[] }) => {
             console.log('Subscribe request received for resources:', params.resources);
             return { ok: true };
-        });
+        };
 
         // Unsubscribe handler
-        this.server.handle("unsubscribe", async (params: { resources: MCPResource[] }) => {
+        this.server.methods.unsubscribe = async (params: { resources: MCPResource[] }) => {
             console.log('Unsubscribe request received for resources:', params.resources);
             params.resources.forEach(resource => {
                 this.watchedResources.delete(resource.id);
             });
             return { ok: true };
-        });
+        };
     }
 
     public async start() {
