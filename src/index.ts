@@ -139,7 +139,7 @@ class FigmaAPIServer {
 
     private setupHandlers() {
         // List resources handler
-        this.server.methods.list = async () => {
+        this.server.onRequest("list", async () => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
@@ -161,10 +161,10 @@ class FigmaAPIServer {
                 console.error('Error listing files:', error);
                 throw error;
             }
-        };
+        });
 
         // Read resource handler
-        this.server.methods.read = async (params: { id: string }) => {
+        this.server.onRequest("read", async (params: { id: string }) => {
             try {
                 console.log(`Reading file: ${params.id}`);
                 const response = await this.makeAPIRequest(`/files/${params.id}`);
@@ -185,10 +185,10 @@ class FigmaAPIServer {
                 console.error(`Error reading file ${params.id}:`, error);
                 throw error;
             }
-        };
+        });
 
         // Watch handler
-        this.server.methods.watch = async (params: { resources: MCPResource[] }) => {
+        this.server.onRequest("watch", async (params: { resources: MCPResource[] }) => {
             console.log('Watch request received for resources:', params.resources);
             
             for (const resource of params.resources) {
@@ -210,14 +210,17 @@ class FigmaAPIServer {
                     try {
                         const response = await this.makeAPIRequest(`/files/${id}`);
                         if (response.lastModified !== data.lastModified) {
-                            this.server.sendNotification("resourceChanged", {
-                                resource: {
-                                    id,
-                                    type: 'figma.file',
-                                    attributes: {
-                                        name: response.name,
-                                        lastModified: response.lastModified,
-                                        version: response.version
+                            await this.server.notification({
+                                method: "resourceChanged",
+                                params: {
+                                    resource: {
+                                        id,
+                                        type: 'figma.file',
+                                        attributes: {
+                                            name: response.name,
+                                            lastModified: response.lastModified,
+                                            version: response.version
+                                        }
                                     }
                                 }
                             });
@@ -232,22 +235,22 @@ class FigmaAPIServer {
             }, 30000); // Check every 30 seconds
             
             return { ok: true };
-        };
+        });
 
         // Subscribe handler
-        this.server.methods.subscribe = async (params: { resources: MCPResource[] }) => {
+        this.server.onRequest("subscribe", async (params: { resources: MCPResource[] }) => {
             console.log('Subscribe request received for resources:', params.resources);
             return { ok: true };
-        };
+        });
 
         // Unsubscribe handler
-        this.server.methods.unsubscribe = async (params: { resources: MCPResource[] }) => {
+        this.server.onRequest("unsubscribe", async (params: { resources: MCPResource[] }) => {
             console.log('Unsubscribe request received for resources:', params.resources);
             params.resources.forEach(resource => {
                 this.watchedResources.delete(resource.id);
             });
             return { ok: true };
-        };
+        });
     }
 
     public async start() {
