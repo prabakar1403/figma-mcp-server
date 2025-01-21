@@ -1,5 +1,27 @@
-import { ResourceHandler, ResourceContents, ShapeType, CreationParams } from '../types';
+import { ResourceHandler, ResourceContents, ShapeType, CreationParams, Point } from '../types';
 import { z } from 'zod';
+
+function calculateRegularPolygonPoints(
+  centerX: number,
+  centerY: number,
+  radius: number,
+  sides: number,
+  rotation: number = 0
+): Point[] {
+  const points: Point[] = [];
+  const angleStep = (2 * Math.PI) / sides;
+  const rotationInRadians = (rotation * Math.PI) / 180;
+
+  for (let i = 0; i < sides; i++) {
+    const angle = i * angleStep + rotationInRadians;
+    points.push({
+      x: centerX + radius * Math.cos(angle),
+      y: centerY + radius * Math.sin(angle)
+    });
+  }
+
+  return points;
+}
 
 export class CreationHandler implements ResourceHandler {
   private figma: any;
@@ -41,29 +63,72 @@ export class CreationHandler implements ResourceHandler {
           throw new Error('Line properties are required for line creation');
         }
         const { start, end } = properties.line;
-        
-        // Create a line using vector
         node = this.figma.createVector();
-        
-        // Calculate line properties
-        const width = Math.abs(end.x - start.x);
-        const height = Math.abs(end.y - start.y);
-        
-        // Create path for the line
         const path = {
           windingRule: 'NONZERO',
           data: `M ${start.x} ${start.y} L ${end.x} ${end.y}`
         };
-        
         node.vectorPaths = [path];
         node.x = Math.min(start.x, end.x);
         node.y = Math.min(start.y, end.y);
-        node.resize(width, height);
-        
-        // Set stroke weight if provided
-        if (properties.line.strokeWeight) {
-          node.strokeWeight = properties.line.strokeWeight;
+        node.resize(Math.abs(end.x - start.x), Math.abs(end.y - start.y));
+        break;
+
+      case 'polygon':
+        if (!properties.polygon) {
+          throw new Error('Polygon properties are required for polygon creation');
         }
+
+        let points: Point[];
+        const { polygon } = properties;
+
+        // Determine polygon points
+        if (polygon.points) {
+          // Use custom points for irregular polygon
+          points = polygon.points;
+        } else if (polygon.sides && polygon.radius) {
+          // Calculate points for regular polygon
+          const centerX = polygon.centerX || 0;
+          const centerY = polygon.centerY || 0;
+          points = calculateRegularPolygonPoints(
+            centerX,
+            centerY,
+            polygon.radius,
+            polygon.sides,
+            polygon.rotation
+          );
+        } else {
+          throw new Error('Either points or sides+radius must be provided for polygon creation');
+        }
+
+        // Create vector node for polygon
+        node = this.figma.createVector();
+
+        // Create SVG-like path data
+        let pathData = `M ${points[0].x} ${points[0].y}`;
+        for (let i = 1; i < points.length; i++) {
+          pathData += ` L ${points[i].x} ${points[i].y}`;
+        }
+        pathData += ' Z'; // Close the path
+
+        // Set the vector path
+        node.vectorPaths = [{
+          windingRule: 'NONZERO',
+          data: pathData
+        }];
+
+        // Calculate bounding box
+        const xPoints = points.map(p => p.x);
+        const yPoints = points.map(p => p.y);
+        const minX = Math.min(...xPoints);
+        const maxX = Math.max(...xPoints);
+        const minY = Math.min(...yPoints);
+        const maxY = Math.max(...yPoints);
+
+        // Set position and size
+        node.x = minX;
+        node.y = minY;
+        node.resize(maxX - minX, maxY - minY);
         break;
 
       default:
