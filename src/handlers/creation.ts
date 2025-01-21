@@ -1,4 +1,4 @@
-import { ResourceHandler, ResourceContents, ShapeType, CreationParams, Point, FigmaResource } from '../types';
+import { ResourceHandler, ResourceContents, CreationParams, Point, FigmaResource } from '../types';
 
 async function loadImage(source: string): Promise<Uint8Array> {
   try {
@@ -58,9 +58,10 @@ export class CreationHandler implements ResourceHandler {
 
   async create(params: CreationParams): Promise<ResourceContents[]> {
     const { type, properties } = params;
-    let node;
-
-    // Rest of the implementation remains the same until the return statement
+    const node = this.figma.createNode({ type, ...properties });
+    if (!node) {
+      throw new Error('Failed to create node');
+    }
 
     return [{
       type: 'application/json',
@@ -93,5 +94,13 @@ export class CreationHandler implements ResourceHandler {
     if (properties.fill) node.fills = [properties.fill];
     if (properties.stroke) node.strokes = [properties.stroke];
     if (properties.strokeWeight !== undefined) node.strokeWeight = properties.strokeWeight;
+  }
+
+  async search(query: string): Promise<FigmaResource[]> {
+    return [];
+  }
+
+  async watch(uri: string): Promise<void> {
+    // No-op implementation
   }
 }

@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 
 class MockTransport implements Transport {
   private incomingMessages: any[] = [];

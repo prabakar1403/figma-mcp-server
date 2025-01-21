@@ -41,4 +41,29 @@ export type FigmaResource = {
   metadata?: Record<string, any>;
 };
 
+export interface ResourceHandler {
+  list(): Promise<FigmaResource[]>;
+  read(uri: string): Promise<ResourceContents[]>;
+  search(query: string): Promise<FigmaResource[]>;
+  watch(uri: string): Promise<void>;
+}
+
+export interface CreationParams {
+  type: string;
+  properties: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    fill?: any;
+    stroke?: any;
+    strokeWeight?: number;
+  };
+}
+
+export type Point = {
+  x: number;
+  y: number;
+};
+
 // Rest of the type definitions...

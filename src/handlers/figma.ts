@@ -1,8 +1,7 @@
 import fetch from 'node-fetch';
 import debug from 'debug';
-import { ResourceContents } from '@modelcontextprotocol/sdk/types';
 
-import { ResourceHandler, FigmaResource } from '../types.js';
+import { ResourceHandler, FigmaResource, ResourceContents } from '../types.js';
 import { validateUri } from '../middleware/auth.js';
 import { ResourceNotFoundError, ResourceAccessDeniedError } from '../errors.js';
 
@@ -66,9 +65,10 @@ export class FigmaResourceHandler implements ResourceHandler {
       case 'file': {
         const file = await this.figmaRequest(`/files/${fileKey}`);
         return [{
+          type: 'application/json',
+          content: JSON.stringify(file, null, 2),
           uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(file, null, 2)
+          mimeType: 'application/json'
         }];
       }
 
@@ -76,9 +76,10 @@ export class FigmaResourceHandler implements ResourceHandler {
         if (!resourceId) throw new Error('Component ID required');
         const component = await this.figmaRequest(`/files/${fileKey}/components/${resourceId}`);
         return [{
+          type: 'application/json',
+          content: JSON.stringify(component, null, 2),
           uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(component, null, 2)
+          mimeType: 'application/json'
         }];
       }
 
@@ -86,9 +87,10 @@ export class FigmaResourceHandler implements ResourceHandler {
         if (!resourceId) throw new Error('Variable ID required');
         const variable = await this.figmaRequest(`/files/${fileKey}/variables/${resourceId}`);
         return [{
+          type: 'application/json',
+          content: JSON.stringify(variable, null, 2),
           uri,
-          mimeType: 'application/json',
-          text: JSON.stringify(variable, null, 2)
+          mimeType: 'application/json'
         }];
       }
 
