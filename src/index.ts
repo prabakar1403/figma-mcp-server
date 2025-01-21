@@ -213,11 +213,10 @@ class FigmaAPIServer {
 
     private setupHandlers() {
         // List resources handler
-        this.server.setRequestHandler(ListRequestSchema, ListResponseSchema, async () => {
+        this.server.setRequestHandler(ListRequestSchema, async () => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
-                
                 const files: MCPResource[] = response.files.map((file: any) => ({
                     id: file.key,
                     type: 'figma.file',
@@ -228,7 +227,6 @@ class FigmaAPIServer {
                         version: file.version
                     }
                 }));
-
                 console.log(`Found ${files.length} files`);
                 return { resources: files };
             } catch (error) {
@@ -238,14 +236,14 @@ class FigmaAPIServer {
         });
 
         // Read resource handler
-        this.server.setRequestHandler(ReadRequestSchema, ReadResponseSchema, async ({ params }) => {
+        this.server.setRequestHandler(ReadRequestSchema, async (request) => {
             try {
-                console.log(`Reading file: ${params.id}`);
-                const response = await this.makeAPIRequest(`/files/${params.id}`);
+                console.log(`Reading file: ${request.params.id}`);
+                const response = await this.makeAPIRequest(`/files/${request.params.id}`);
                 
                 return {
                     resource: {
-                        id: params.id,
+                        id: request.params.id,
                         type: 'figma.file',
                         attributes: {
                             name: response.name,
@@ -256,16 +254,16 @@ class FigmaAPIServer {
                     }
                 };
             } catch (error) {
-                console.error(`Error reading file ${params.id}:`, error);
+                console.error(`Error reading file ${request.params.id}:`, error);
                 throw error;
             }
         });
 
         // Watch handler
-        this.server.setRequestHandler(WatchRequestSchema, WatchResponseSchema, async ({ params }) => {
-            console.log('Watch request received for resources:', params.resources);
+        this.server.setRequestHandler(WatchRequestSchema, async (request) => {
+            console.log('Watch request received for resources:', request.params.resources);
             
-            for (const resource of params.resources) {
+            for (const resource of request.params.resources) {
                 if (!this.watchedResources.has(resource.id)) {
                     try {
                         const response = await this.makeAPIRequest(`/files/${resource.id}`);
@@ -312,15 +310,15 @@ class FigmaAPIServer {
         });
 
         // Subscribe handler
-        this.server.setRequestHandler(SubscribeRequestSchema, SubscribeResponseSchema, async ({ params }) => {
-            console.log('Subscribe request received for resources:', params.resources);
+        this.server.setRequestHandler(SubscribeRequestSchema, async (request) => {
+            console.log('Subscribe request received for resources:', request.params.resources);
             return { ok: true };
         });
 
         // Unsubscribe handler
-        this.server.setRequestHandler(UnsubscribeRequestSchema, UnsubscribeResponseSchema, async ({ params }) => {
-            console.log('Unsubscribe request received for resources:', params.resources);
-            params.resources.forEach(resource => {
+        this.server.setRequestHandler(UnsubscribeRequestSchema, async (request) => {
+            console.log('Unsubscribe request received for resources:', request.params.resources);
+            request.params.resources.forEach(resource => {
                 this.watchedResources.delete(resource.id);
             });
             return { ok: true };
