@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ResourceContents } from '@modelcontextprotocol/sdk/types';
 
-// Existing types...
+// Existing types remain the same...
 export type FigmaFile = {
   key: string;
   name: string;
@@ -35,7 +35,6 @@ export type FigmaResource = {
   metadata?: Record<string, any>;
 };
 
-// Color and style types
 export type Color = {
   r: number;
   g: number;
@@ -47,20 +46,28 @@ export type FillStyle = {
   color: Color;
 };
 
-// Point type for line endpoints
 export type Point = {
   x: number;
   y: number;
 };
 
-// Line specific properties
 export type LineProperties = {
   start: Point;
   end: Point;
   strokeWeight?: number;
 };
 
-// Base creation properties
+// New Polygon Properties
+export type PolygonProperties = {
+  points?: Point[];     // Custom points for irregular polygon
+  sides?: number;       // Number of sides for regular polygon
+  radius?: number;      // Radius for regular polygon
+  rotation?: number;    // Rotation angle in degrees
+  centerX?: number;     // Center point X
+  centerY?: number;     // Center point Y
+};
+
+// Updated Creation Properties
 export type CreationProperties = {
   x?: number;
   y?: number;
@@ -71,13 +78,16 @@ export type CreationProperties = {
   strokeWeight?: number;
   text?: string;
   line?: LineProperties;
+  polygon?: PolygonProperties;
 };
 
+// Updated Shape Types
 export type ShapeType = 
   | 'rectangle' 
   | 'ellipse' 
   | 'text'
-  | 'line';
+  | 'line'
+  | 'polygon';
 
 export type CreationParams = {
   type: ShapeType;
