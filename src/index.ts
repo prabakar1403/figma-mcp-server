@@ -10,6 +10,17 @@ import cors from 'cors';
 // Load environment variables
 dotenv.config();
 
+// Define resource schemas
+const FigmaFileSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  lastModified: z.string(),
+  thumbnailUrl: z.string().optional(),
+  version: z.string()
+});
+
+type FigmaFile = z.infer<typeof FigmaFileSchema>;
+
 class FigmaAPIServer {
     private server: Server;
     private figmaToken: string;
@@ -49,6 +60,26 @@ class FigmaAPIServer {
         this.setupExpress();
     }
 
+    private async makeAPIRequest(endpoint: string, method: 'GET' | 'POST' = 'GET') {
+        try {
+            const response = await axios({
+                method,
+                url: `${this.baseURL}${endpoint}`,
+                headers: {
+                    'X-Figma-Token': this.figmaToken,
+                    'Content-Type': 'application/json'
+                }
+            });
+            return response.data;
+        } catch (error) {
+            if (error instanceof AxiosError) {
+                console.error(`Figma API error: ${error.response?.status} - ${error.response?.statusText}`);
+                throw new Error(`Figma API error: ${error.response?.status} - ${error.message}`);
+            }
+            throw error;
+        }
+    }
+
     private setupExpress() {
         // Log all incoming requests
         this.expressApp.use((req, res, next) => {
@@ -76,21 +107,21 @@ class FigmaAPIServer {
 
             // Create SSE transport for this connection
             const sseTransport = new SSEServerTransport('/events', res);
-            await sseTransport.start();
+            
+            try {
+                // Register transport with server
+                await this.server.addTransport(sseTransport);
+                console.log('Transport added successfully');
 
-            const clientId = Date.now();
-            console.log(`SSE Client ${clientId} connected`);
-
-            // Handle incoming POST requests for this transport
-            this.expressApp.post('/events', async (postReq, postRes) => {
-                await sseTransport.handlePostMessage(postReq, postRes);
-            });
-
-            // Handle client disconnect
-            req.on('close', () => {
-                console.log(`SSE Client ${clientId} disconnected`);
-                sseTransport.close().catch(console.error);
-            });
+                // Handle client disconnect
+                req.on('close', () => {
+                    console.log('Client disconnected');
+                    this.server.removeTransport(sseTransport).catch(console.error);
+                });
+            } catch (error) {
+                console.error('Error setting up SSE transport:', error);
+                res.end();
+            }
         });
 
         // Health check endpoint
@@ -100,7 +131,110 @@ class FigmaAPIServer {
     }
 
     private setupHandlers() {
-        // ... [Previous handlers implementation] ...
+        // List resources handler
+        this.server.onList(async () => {
+            try {
+                console.log('Listing Figma files...');
+                const response = await this.makeAPIRequest('/me/files');
+                
+                const files = response.files.map((file: any) => ({
+                    id: file.key,
+                    type: 'figma.file',
+                    attributes: {
+                        name: file.name,
+                        lastModified: file.last_modified,
+                        thumbnailUrl: file.thumbnail_url,
+                        version: file.version
+                    }
+                }));
+
+                console.log(`Found ${files.length} files`);
+                return { resources: files };
+            } catch (error) {
+                console.error('Error listing files:', error);
+                throw error;
+            }
+        });
+
+        // Read resource handler
+        this.server.onRead(async ({ id }) => {
+            try {
+                console.log(`Reading file: ${id}`);
+                const response = await this.makeAPIRequest(`/files/${id}`);
+                
+                return {
+                    id,
+                    type: 'figma.file',
+                    attributes: {
+                        name: response.name,
+                        lastModified: response.lastModified,
+                        version: response.version,
+                        document: response.document
+                    }
+                };
+            } catch (error) {
+                console.error(`Error reading file ${id}:`, error);
+                throw error;
+            }
+        });
+
+        // Watch resource handler
+        this.server.onWatch(async ({ resources }) => {
+            console.log('Watch request received for resources:', resources);
+            
+            for (const resource of resources) {
+                if (!this.watchedResources.has(resource.id)) {
+                    try {
+                        const response = await this.makeAPIRequest(`/files/${resource.id}`);
+                        this.watchedResources.set(resource.id, {
+                            lastModified: response.lastModified
+                        });
+                    } catch (error) {
+                        console.error(`Error watching resource ${resource.id}:`, error);
+                    }
+                }
+            }
+
+            // Set up periodic checking for changes
+            setInterval(async () => {
+                for (const [id, data] of this.watchedResources.entries()) {
+                    try {
+                        const response = await this.makeAPIRequest(`/files/${id}`);
+                        if (response.lastModified !== data.lastModified) {
+                            this.server.emit('resourceChanged', {
+                                id,
+                                type: 'figma.file',
+                                attributes: {
+                                    name: response.name,
+                                    lastModified: response.lastModified,
+                                    version: response.version
+                                }
+                            });
+                            this.watchedResources.set(id, {
+                                lastModified: response.lastModified
+                            });
+                        }
+                    } catch (error) {
+                        console.error(`Error checking updates for ${id}:`, error);
+                    }
+                }
+            }, 30000); // Check every 30 seconds
+        });
+
+        // Subscribe handler
+        this.server.onSubscribe(async ({ resources }) => {
+            console.log('Subscribe request received for resources:', resources);
+            return { ok: true };
+        });
+
+        // Unsubscribe handler
+        this.server.onUnsubscribe(async ({ resources }) => {
+            console.log('Unsubscribe request received for resources:', resources);
+            resources.forEach(resource => {
+                this.watchedResources.delete(resource.id);
+            });
+            return { ok: true };
+        });
     }
 
     public async start() {
