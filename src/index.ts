@@ -4,6 +4,8 @@ import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   Implementation,
   InitializeRequest,
+  InitializeRequestSchema,
+  InitializeResultSchema,
   LATEST_PROTOCOL_VERSION,
   Resource,
   ResourceSchema,
@@ -22,7 +24,8 @@ dotenv.config();
 
 // Define request schemas
 const ListResourcesRequestSchema = z.object({
-  method: z.literal('resources/list')
+  method: z.literal('resources/list'),
+  params: z.object({}).optional()
 });
 
 const ReadResourceRequestSchema = z.object({
@@ -77,6 +80,12 @@ const SubscribeResponseSchema = z.object({
 const UnsubscribeResponseSchema = z.object({
   ok: z.boolean()
 });
+
+type ListResourcesRequest = z.infer<typeof ListResourcesRequestSchema>;
+type ReadResourceRequest = z.infer<typeof ReadResourceRequestSchema>;
+type WatchRequest = z.infer<typeof WatchRequestSchema>;
+type SubscribeRequest = z.infer<typeof SubscribeRequestSchema>;
+type UnsubscribeRequest = z.infer<typeof UnsubscribeRequestSchema>;
 
 interface ServerState {
   clientCapabilities?: any;
@@ -198,7 +207,7 @@ class FigmaAPIServer {
 
     private setupHandlers() {
         // Handle initialization
-        this.server.setRequestHandler("initialize", async (request: InitializeRequest) => {
+        this.server.setRequestHandler(InitializeRequestSchema, InitializeResultSchema, async (request: InitializeRequest) => {
           const requestedVersion = request.params.protocolVersion;
           this.state.clientCapabilities = request.params.capabilities;
           this.state.clientVersion = request.params.clientInfo;
@@ -219,7 +228,7 @@ class FigmaAPIServer {
         });
 
         // List resources handler
-        this.server.setRequestHandler(ListResourcesRequestSchema, ListResourcesResponseSchema, async () => {
+        this.server.setRequestHandler(ListResourcesRequestSchema, ListResourcesResponseSchema, async (_request: ListResourcesRequest) => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
@@ -240,7 +249,7 @@ class FigmaAPIServer {
         });
 
         // Read resource handler
-        this.server.setRequestHandler(ReadResourceRequestSchema, ReadResourceResponseSchema, async (request) => {
+        this.server.setRequestHandler(ReadResourceRequestSchema, ReadResourceResponseSchema, async (request: ReadResourceRequest) => {
             try {
                 const fileKey = request.params.uri.replace('figma://', '');
                 console.log(`Reading file: ${fileKey}`);
@@ -260,7 +269,7 @@ class FigmaAPIServer {
         });
 
         // Watch handler
-        this.server.setRequestHandler(WatchRequestSchema, WatchResponseSchema, async (request) => {
+        this.server.setRequestHandler(WatchRequestSchema, WatchResponseSchema, async (request: WatchRequest) => {
             console.log('Watch request received for resources:', request.params.resources);
             
             for (const resource of request.params.resources) {
@@ -303,14 +312,14 @@ class FigmaAPIServer {
         });
 
         // Subscribe handler
-        this.server.setRequestHandler(SubscribeRequestSchema, SubscribeResponseSchema, async (request) => {
+        this.server.setRequestHandler(SubscribeRequestSchema, SubscribeResponseSchema, async (request: SubscribeRequest) => {
             const fileKey = request.params.uri.replace('figma://', '');
             console.log('Subscribe request received for resource:', fileKey);
             return { ok: true };
         });
 
         // Unsubscribe handler
-        this.server.setRequestHandler(UnsubscribeRequestSchema, UnsubscribeResponseSchema, async (request) => {
+        this.server.setRequestHandler(UnsubscribeRequestSchema, UnsubscribeResponseSchema, async (request: UnsubscribeRequest) => {
             const fileKey = request.params.uri.replace('figma://', '');
             console.log('Unsubscribe request received for resource:', fileKey);
             this.state.watchedResources.delete(fileKey);
