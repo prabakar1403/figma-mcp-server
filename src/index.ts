@@ -1,6 +1,12 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { 
+    InitializeRequest, 
+    InitializeResult,
+    ServerCapabilities,
+    ClientCapabilities
+} from "@modelcontextprotocol/sdk/types.js";
 import express, { Request, Response, NextFunction } from "express";
 import { createServer } from "http";
 import { ServerResponse } from 'http';
@@ -12,31 +18,84 @@ import cors from 'cors';
 // Load environment variables
 dotenv.config();
 
-class FigmaAPIServer {
-    private server: Server;
+// Define resource schemas
+const FigmaFileSchema = z.object({
+    key: z.string(),
+    name: z.string(),
+    lastModified: z.string(),
+    thumbnailUrl: z.string().optional(),
+    version: z.string()
+});
+
+const ListRequestSchema = z.object({
+    method: z.literal('list')
+});
+
+const ReadRequestSchema = z.object({
+    method: z.literal('read'),
+    params: z.object({
+        id: z.string()
+    })
+});
+
+const WatchRequestSchema = z.object({
+    method: z.literal('watch'),
+    params: z.object({
+        resources: z.array(z.object({
+            id: z.string(),
+            type: z.string(),
+            attributes: z.record(z.unknown())
+        }))
+    })
+});
+
+class FigmaAPIServer extends Server {
     private figmaToken: string;
     private baseURL: string = 'https://api.figma.com/v1';
     private watchedResources: Map<string, { lastModified: string }> = new Map();
     private expressApp: express.Application;
     private httpServer: ReturnType<typeof createServer>;
     private transport?: Transport;
+    private clientCapabilities?: ClientCapabilities;
 
     constructor(figmaToken: string) {
+        // Initialize with server info and capabilities
+        super(
+            {
+                name: "figma-api-server",
+                version: "1.0.0"
+            },
+            {
+                capabilities: {
+                    resources: {
+                        subscribe: true,
+                        listChanged: true,
+                        list: true,
+                        read: true,
+                        watch: true
+                    },
+                    commands: {},
+                    events: {}
+                }
+            }
+        );
+        
         if (!figmaToken) {
             throw new Error('FIGMA_ACCESS_TOKEN is required but not provided');
         }
-        
-        console.log(`Initializing server with token starting with: ${figmaToken.substring(0, 8)}...`);
         
         this.figmaToken = figmaToken;
         this.expressApp = express();
         this.httpServer = createServer(this.expressApp);
         
-        // Initialize Server
-        this.server = new Server({
-            name: "figma-api-server",
-            version: "1.0.0",
-        }, {
+        // Set up handlers after initialization
+        this.setupExpressAndHandlers();
+    }
+
+    private async _oninitialize(request: InitializeRequest): Promise<InitializeResult> {
+        this.clientCapabilities = request.params.capabilities;
+        return {
+            protocolVersion: request.params.protocolVersion,
             capabilities: {
                 resources: {
                     subscribe: true,
@@ -47,17 +106,18 @@ class FigmaAPIServer {
                 },
                 commands: {},
                 events: {}
+            },
+            serverInfo: {
+                name: "figma-api-server",
+                version: "1.0.0"
             }
-        });
-        
-        this.setupExpressAndHandlers();
+        };
     }
 
     private setupExpressAndHandlers() {
-        // Express middleware
+        // Express middleware setup
         this.expressApp.use(express.json());
-        this.expressApp.use(express.text()); // Add text parsing middleware
-        
+        this.expressApp.use(express.text());
         this.expressApp.use(cors({
             origin: '*',
             methods: ['GET', 'POST'],
@@ -65,7 +125,7 @@ class FigmaAPIServer {
             credentials: true
         }));
 
-        // Logging middleware with request body logging
+        // Logging middleware
         this.expressApp.use((req: Request, res: Response, next: NextFunction) => {
             console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
             if (req.body) {
@@ -74,10 +134,11 @@ class FigmaAPIServer {
             next();
         });
 
-        // SSE endpoint with improved error handling
+        // SSE endpoint
         this.expressApp.get('/events', async (req: Request, res: ServerResponse) => {
             console.log('New SSE connection attempt');
             
+            // Set SSE headers
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream',
                 'Cache-Control': 'no-cache',
@@ -85,63 +146,40 @@ class FigmaAPIServer {
                 'Access-Control-Allow-Origin': '*'
             });
 
-            // Initialize transport first
             try {
-                const transport = new SSEServerTransport('/events', res);
+                // Create transport with proper error handling
+                this.transport = new SSEServerTransport('/events', res);
                 
-                // Create new server instance with this transport
-                this.server = new Server(
-                    {
-                        name: "figma-api-server",
-                        version: "1.0.0",
-                        transport
-                    },
-                    {
-                        capabilities: {
-                            resources: {
-                                subscribe: true,
-                                listChanged: true,
-                                list: true,
-                                read: true,
-                                watch: true
-                            },
-                            commands: {},
-                            events: {}
-                        }
-                    }
-                );
-
-                // Set up request handlers
-                this.setupRequestHandlers();
-                
-                // Send initial connection success
+                // Notify successful connection
                 res.write('data: {"type":"connection","status":"connected"}\n\n');
                 
-                // Keep connection alive
+                // Set up keepalive
                 const keepAlive = setInterval(() => {
                     try {
                         res.write('data: {"type":"ping"}\n\n');
                     } catch (error) {
-                        console.error('Error sending keepalive:', error);
                         clearInterval(keepAlive);
+                        console.error('Error sending keepalive:', error);
                     }
                 }, 30000);
 
-                // Handle client disconnect
+                // Handle disconnection
                 req.on('close', () => {
-                    console.log('Client disconnected');
                     clearInterval(keepAlive);
+                    console.log('Client disconnected');
                     this.transport = undefined;
                 });
 
                 req.on('error', (error: Error) => {
-                    console.error('Connection error:', error);
                     clearInterval(keepAlive);
+                    console.error('Connection error:', error);
                     this.transport = undefined;
                 });
 
-                this.transport = transport;
-                console.log('Transport and server configured successfully');
+                console.log('Transport configured successfully');
+                
+                // Set up request handlers after transport is ready
+                this.setupRequestHandlers();
 
             } catch (error) {
                 console.error('Error initializing transport:', error);
@@ -165,7 +203,69 @@ class FigmaAPIServer {
     }
 
     private setupRequestHandlers() {
-        // ... (implement your request handlers here)
+        // List resources handler
+        this.setRequestHandler(ListRequestSchema, async () => {
+            try {
+                console.log('Listing Figma files...');
+                const response = await this.makeAPIRequest('/me/files');
+                const files = response.files.map((file: any) => ({
+                    id: file.key,
+                    type: 'figma.file',
+                    attributes: {
+                        name: file.name,
+                        lastModified: file.last_modified,
+                        thumbnailUrl: file.thumbnail_url,
+                        version: file.version
+                    }
+                }));
+                console.log(`Found ${files.length} files`);
+                return { resources: files };
+            } catch (error) {
+                console.error('Error listing files:', error);
+                throw error;
+            }
+        });
+
+        // Read resource handler
+        this.setRequestHandler(ReadRequestSchema, async (request) => {
+            try {
+                console.log(`Reading file: ${request.params.id}`);
+                const response = await this.makeAPIRequest(`/files/${request.params.id}`);
+                return {
+                    resource: {
+                        id: request.params.id,
+                        type: 'figma.file',
+                        attributes: {
+                            name: response.name,
+                            lastModified: response.lastModified,
+                            version: response.version,
+                            document: response.document
+                        }
+                    }
+                };
+            } catch (error) {
+                console.error(`Error reading file ${request.params.id}:`, error);
+                throw error;
+            }
+        });
+
+        // Watch handler
+        this.setRequestHandler(WatchRequestSchema, async (request) => {
+            console.log('Watch request received for resources:', request.params.resources);
+            for (const resource of request.params.resources) {
+                if (!this.watchedResources.has(resource.id)) {
+                    try {
+                        const response = await this.makeAPIRequest(`/files/${resource.id}`);
+                        this.watchedResources.set(resource.id, {
+                            lastModified: response.lastModified
+                        });
+                    } catch (error) {
+                        console.error(`Error watching resource ${resource.id}:`, error);
+                    }
+                }
+            }
+            return { ok: true };
+        });
     }
 
     private async makeAPIRequest(endpoint: string, method: 'GET' | 'POST' = 'GET') {
