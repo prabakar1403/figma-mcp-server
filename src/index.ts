@@ -5,8 +5,7 @@ import express from "express";
 import { createServer } from "http";
 import { z } from 'zod';
 import axios from 'axios';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
+import 'dotenv/config';
 
 const serverCapabilities: ServerCapabilities = {
     resources: {
@@ -129,21 +128,15 @@ class FigmaAPIServer extends Server {
     }
 }
 
-// ES module compatible way to check if file is being run directly
-const isMainModule = import.meta.url === fileURLToPath(process.argv[1]);
-
-if (isMainModule) {
-    const token = process.env.FIGMA_ACCESS_TOKEN;
-    if (!token) {
-        console.error('FIGMA_ACCESS_TOKEN environment variable is required');
-        process.exit(1);
-    }
-
-    const server = new FigmaAPIServer(token);
-    server.start().catch(error => {
-        console.error('Server failed to start:', error);
-        process.exit(1);
-    });
+// Start the server
+const token = process.env.FIGMA_ACCESS_TOKEN;
+if (!token) {
+    console.error('FIGMA_ACCESS_TOKEN environment variable is required');
+    process.exit(1);
 }
 
-export default FigmaAPIServer;
+const server = new FigmaAPIServer(token);
+server.start().catch(error => {
+    console.error('Server failed to start:', error);
+    process.exit(1);
+});
