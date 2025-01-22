@@ -1,0 +1,48 @@
+diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -89,6 +89,7 @@ class FigmaAPIServer {
+         this.server = new Server({
+             name: "figma-api-server",
+             version: "1.0.0",
++            transport: new SSEServerTransport('/events')
+         }, {
+             capabilities: {
+                 resources: {
+@@ -134,6 +135,7 @@ class FigmaAPIServer {
+         }));\n
++        this.expressApp.use(express.json());
+ 
+         // SSE endpoint
+         this.expressApp.get('/events', async (req, res) => {
+@@ -142,9 +144,15 @@ class FigmaAPIServer {
+             res.writeHead(200, {
+                 'Content-Type': 'text/event-stream',
+                 'Cache-Control': 'no-cache',
+-                'Connection': 'keep-alive'
++                'Connection': 'keep-alive',
++                'Access-Control-Allow-Origin': '*'
+             });
+ 
++            // Send initial connection message
++            res.write('event: connected\ndata: {}\n\n');
++            
++            const keepAlive = setInterval(() => res.write(': keepalive\n\n'), 30000);
++
+             // Create SSE transport for this connection
+             const sseTransport = new SSEServerTransport('/events', res) as Transport;
+             
+@@ -155,11 +163,13 @@ class FigmaAPIServer {
+ 
+                 // Handle client disconnect
+                 req.on('close', () => {
++                    clearInterval(keepAlive);
+                     console.log('Client disconnected');
+                     this.currentTransport = undefined;
+                 });
+             } catch (error) {
+                 console.error('Error setting up SSE transport:', error);
++                clearInterval(keepAlive);
+                 res.end();
+             }
+         });
