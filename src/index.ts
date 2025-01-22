@@ -118,9 +118,14 @@ class FigmaAPIServer {
         console.log(`Initializing server with token starting with: ${figmaToken.substring(0, 8)}...`);
         
         this.figmaToken = figmaToken;
+
+        // Create transport first
+        const transport = new SSEServerTransport('/events');
+
         this.server = new Server({
             name: "figma-api-server",
             version: "1.0.0",
+            transport: transport  // Initialize with transport
         }, {
             capabilities: {
                 resources: {
@@ -168,6 +173,9 @@ class FigmaAPIServer {
             next();
         });
 
+        // Add JSON parsing middleware
+        this.expressApp.use(express.json());
+
         // CORS configuration
         this.expressApp.use(cors({
             origin: '*',
@@ -180,27 +188,39 @@ class FigmaAPIServer {
         this.expressApp.get('/events', async (req, res) => {
             console.log('New SSE connection attempt');
             
+            // Set headers
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream',
                 'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive'
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*'
             });
 
-            // Create SSE transport for this connection
-            const sseTransport = new SSEServerTransport('/events', res) as Transport;
-            
+            // Send initial connection established message
+            res.write('event: connected\ndata: {}\n\n');
+
+            // Keep connection alive
+            const keepAlive = setInterval(() => {
+                res.write(': keepalive\n\n');
+            }, 30000);
+
             try {
+                // Create SSE transport for this connection
+                const sseTransport = new SSEServerTransport('/events', res) as Transport;
+                
                 // Store transport reference
                 this.currentTransport = sseTransport;
                 console.log('Transport added successfully');
 
                 // Handle client disconnect
                 req.on('close', () => {
+                    clearInterval(keepAlive);
                     console.log('Client disconnected');
                     this.currentTransport = undefined;
                 });
             } catch (error) {
                 console.error('Error setting up SSE transport:', error);
+                clearInterval(keepAlive);
                 res.end();
             }
         });
@@ -208,6 +228,15 @@ class FigmaAPIServer {
         // Health check endpoint
         this.expressApp.get('/health', (req, res) => {
             res.json({ status: 'healthy' });
+        });
+
+        // Error handling middleware
+        this.expressApp.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+            console.error('Error processing request:', err);
+            res.status(500).json({
+                error: 'Internal server error',
+                message: err.message
+            });
         });
     }
 
@@ -339,6 +368,15 @@ class FigmaAPIServer {
                 });
             });
 
+            // Add signal handlers
+            process.on('SIGTERM', () => {
+                console.log('Received SIGTERM. Performing graceful shutdown...');
+                this.httpServer.close(() => {
+                    console.log('Server shut down successfully');
+                    process.exit(0);
+                });
+            });
+
             console.log('Server started successfully');
 
         } catch (error) {
@@ -352,6 +390,15 @@ class FigmaAPIServer {
 async function main() {
     try {
         console.log('Starting Figma MCP server...');
+        
+        // Add more detailed environment validation
+        const requiredEnvVars = ['FIGMA_ACCESS_TOKEN'];
+        const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+        
+        if (missingEnvVars.length > 0) {
+            throw new Error(`Missing required environment variables: ${missingEnvVars.join(', ')}`);
+        }
+
         console.log('Environment variables loaded:', {
             FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN ? 'Present' : 'Missing',
             PORT: process.env.PORT || 3000,
