@@ -2,10 +2,10 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { 
-    InitializeRequest, 
-    InitializeResult,
+    InitializeRequestSchema,
     ServerCapabilities,
-    ClientCapabilities
+    ClientCapabilities,
+    LATEST_PROTOCOL_VERSION
 } from "@modelcontextprotocol/sdk/types.js";
 import express, { Request, Response, NextFunction } from "express";
 import { createServer } from "http";
@@ -60,23 +60,25 @@ class FigmaAPIServer extends Server {
 
     constructor(figmaToken: string) {
         // Initialize with server info and capabilities
+        const serverCapabilities: ServerCapabilities = {
+            resources: {
+                subscribe: true,
+                listChanged: true,
+                list: true,
+                read: true,
+                watch: true
+            },
+            commands: {},
+            events: {}
+        };
+
         super(
             {
                 name: "figma-api-server",
                 version: "1.0.0"
             },
             {
-                capabilities: {
-                    resources: {
-                        subscribe: true,
-                        listChanged: true,
-                        list: true,
-                        read: true,
-                        watch: true
-                    },
-                    commands: {},
-                    events: {}
-                }
+                capabilities: serverCapabilities
             }
         );
         
@@ -90,28 +92,19 @@ class FigmaAPIServer extends Server {
         
         // Set up handlers after initialization
         this.setupExpressAndHandlers();
-    }
 
-    private async _oninitialize(request: InitializeRequest): Promise<InitializeResult> {
-        this.clientCapabilities = request.params.capabilities;
-        return {
-            protocolVersion: request.params.protocolVersion,
-            capabilities: {
-                resources: {
-                    subscribe: true,
-                    listChanged: true,
-                    list: true,
-                    read: true,
-                    watch: true
-                },
-                commands: {},
-                events: {}
-            },
-            serverInfo: {
-                name: "figma-api-server",
-                version: "1.0.0"
-            }
-        };
+        // Set up initialize request handler
+        this.setRequestHandler(InitializeRequestSchema, async (request) => {
+            this.clientCapabilities = request.params.capabilities;
+            return {
+                protocolVersion: request.params.protocolVersion || LATEST_PROTOCOL_VERSION,
+                capabilities: serverCapabilities,
+                serverInfo: {
+                    name: "figma-api-server",
+                    version: "1.0.0"
+                }
+            };
+        });
     }
 
     private setupExpressAndHandlers() {
@@ -150,7 +143,7 @@ class FigmaAPIServer extends Server {
                 // Create transport with proper error handling
                 this.transport = new SSEServerTransport('/events', res);
                 
-                // Notify successful connection
+                // Send initial connection message
                 res.write('data: {"type":"connection","status":"connected"}\n\n');
                 
                 // Set up keepalive
@@ -311,27 +304,31 @@ class FigmaAPIServer extends Server {
     }
 }
 
+export default FigmaAPIServer;
+
 // Start the server
-async function main() {
-    try {
-        console.log('Starting Figma MCP server...');
-        console.log('Environment variables loaded:', {
-            FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN ? 'Present' : 'Missing',
-            PORT: process.env.PORT || 3000,
-            HOST: process.env.HOST || 'localhost'
-        });
+if (require.main === module) {
+    async function main() {
+        try {
+            console.log('Starting Figma MCP server...');
+            console.log('Environment variables loaded:', {
+                FIGMA_ACCESS_TOKEN: process.env.FIGMA_ACCESS_TOKEN ? 'Present' : 'Missing',
+                PORT: process.env.PORT || 3000,
+                HOST: process.env.HOST || 'localhost'
+            });
 
-        const figmaToken = process.env.FIGMA_ACCESS_TOKEN;
-        if (!figmaToken) {
-            throw new Error('FIGMA_ACCESS_TOKEN environment variable is required');
+            const figmaToken = process.env.FIGMA_ACCESS_TOKEN;
+            if (!figmaToken) {
+                throw new Error('FIGMA_ACCESS_TOKEN environment variable is required');
+            }
+
+            const server = new FigmaAPIServer(figmaToken);
+            await server.start();
+        } catch (error) {
+            console.error('Fatal error starting server:', error);
+            process.exit(1);
         }
-
-        const server = new FigmaAPIServer(figmaToken);
-        await server.start();
-    } catch (error) {
-        console.error('Fatal error starting server:', error);
-        process.exit(1);
     }
-}
 
-main().catch(console.error);
+    main().catch(console.error);
+}
