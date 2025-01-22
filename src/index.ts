@@ -1,20 +1,21 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { Protocol } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import {
   Implementation,
   InitializeRequest,
   InitializeRequestSchema,
   InitializeResultSchema,
   LATEST_PROTOCOL_VERSION,
+  Request,
   Resource,
   ResourceSchema,
   ServerCapabilities,
   SUPPORTED_PROTOCOL_VERSIONS,
-  Request,
   Result,
-  Notification
+  Notification,
+  RequestSchema,
+  EmptyResultSchema
 } from "@modelcontextprotocol/sdk/types.js";
 import express from "express";
 import { createServer } from "http";
@@ -26,44 +27,56 @@ import cors from 'cors';
 // Load environment variables
 dotenv.config();
 
-// Define types
-type CustomRequest = Request;
-type CustomResult = Result;
-type CustomNotification = Notification;
-
 // Define request schemas
-const ListResourcesRequestSchema = z.object({
+const ListResourcesRequestSchema = RequestSchema.extend({
   method: z.literal('resources/list'),
   params: z.object({}).optional()
 });
 
-const ReadResourceRequestSchema = z.object({
+const ReadResourceRequestSchema = RequestSchema.extend({
   method: z.literal('resources/read'),
   params: z.object({
     uri: z.string()
   })
 });
 
-const WatchRequestSchema = z.object({
+const WatchRequestSchema = RequestSchema.extend({
   method: z.literal('resources/watch'),
   params: z.object({
     resources: z.array(ResourceSchema)
   })
 });
 
-const SubscribeRequestSchema = z.object({
+const SubscribeRequestSchema = RequestSchema.extend({
   method: z.literal('resources/subscribe'),
   params: z.object({
     uri: z.string()
   })
 });
 
-const UnsubscribeRequestSchema = z.object({
+const UnsubscribeRequestSchema = RequestSchema.extend({
   method: z.literal('resources/unsubscribe'),
   params: z.object({
     uri: z.string()
   })
 });
+
+// Define response schemas
+const ListResourcesResponseSchema = z.object({
+  resources: z.array(ResourceSchema)
+});
+
+const ReadResourceResponseSchema = z.object({
+  contents: z.array(z.object({
+    uri: z.string(),
+    mimeType: z.string().optional(),
+    text: z.string()
+  }))
+});
+
+const WatchResponseSchema = EmptyResultSchema;
+const SubscribeResponseSchema = EmptyResultSchema;
+const UnsubscribeResponseSchema = EmptyResultSchema;
 
 type ListResourcesRequest = z.infer<typeof ListResourcesRequestSchema>;
 type ReadResourceRequest = z.infer<typeof ReadResourceRequestSchema>;
@@ -79,7 +92,7 @@ interface ServerState {
 }
 
 class FigmaAPIServer {
-    private server: Server<CustomRequest, CustomNotification, CustomResult>;
+    private server: Server<Request, Notification, Result>;
     private figmaToken: string;
     private baseURL: string = 'https://api.figma.com/v1';
     private state: ServerState = {
@@ -191,7 +204,7 @@ class FigmaAPIServer {
 
     private setupHandlers() {
         // Handle initialization
-        this.server.setHandler(InitializeRequestSchema, async (request: InitializeRequest) => {
+        this.server.setRequestHandler(InitializeRequestSchema, (request: InitializeRequest) => {
           const requestedVersion = request.params.protocolVersion;
           this.state.clientCapabilities = request.params.capabilities;
           this.state.clientVersion = request.params.clientInfo;
@@ -201,18 +214,18 @@ class FigmaAPIServer {
             ? requestedVersion
             : LATEST_PROTOCOL_VERSION;
 
-          return {
+          return Promise.resolve({
             protocolVersion: supportedVersion,
             capabilities: this.state.capabilities,
             serverInfo: {
               name: "figma-api-server",
               version: "1.0.0"
             }
-          };
+          });
         });
 
         // List resources handler
-        this.server.setHandler(ListResourcesRequestSchema, async (_request: ListResourcesRequest) => {
+        this.server.setRequestHandler(ListResourcesRequestSchema, async (_request: ListResourcesRequest) => {
             try {
                 console.log('Listing Figma files...');
                 const response = await this.makeAPIRequest('/me/files');
@@ -233,7 +246,7 @@ class FigmaAPIServer {
         });
 
         // Read resource handler
-        this.server.setHandler(ReadResourceRequestSchema, async (request: ReadResourceRequest) => {
+        this.server.setRequestHandler(ReadResourceRequestSchema, async (request: ReadResourceRequest) => {
             try {
                 const fileKey = request.params.uri.replace('figma://', '');
                 console.log(`Reading file: ${fileKey}`);
@@ -253,7 +266,7 @@ class FigmaAPIServer {
         });
 
         // Watch handler
-        this.server.setHandler(WatchRequestSchema, async (request: WatchRequest) => {
+        this.server.setRequestHandler(WatchRequestSchema, async (request: WatchRequest) => {
             console.log('Watch request received for resources:', request.params.resources);
             
             for (const resource of request.params.resources) {
@@ -292,22 +305,22 @@ class FigmaAPIServer {
                 }
             }, 30000); // Check every 30 seconds
             
-            return { ok: true };
+            return {};
         });
 
         // Subscribe handler
-        this.server.setHandler(SubscribeRequestSchema, async (request: SubscribeRequest) => {
+        this.server.setRequestHandler(SubscribeRequestSchema, async (request: SubscribeRequest) => {
             const fileKey = request.params.uri.replace('figma://', '');
             console.log('Subscribe request received for resource:', fileKey);
-            return { ok: true };
+            return {};
         });
 
         // Unsubscribe handler
-        this.server.setHandler(UnsubscribeRequestSchema, async (request: UnsubscribeRequest) => {
+        this.server.setRequestHandler(UnsubscribeRequestSchema, async (request: UnsubscribeRequest) => {
             const fileKey = request.params.uri.replace('figma://', '');
             console.log('Unsubscribe request received for resource:', fileKey);
             this.state.watchedResources.delete(fileKey);
-            return { ok: true };
+            return {};
         });
     }
 
